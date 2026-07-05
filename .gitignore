@@ -1,0 +1,7 @@
+# 배포(웹앱)에 불필요한 파일 — 아래는 GitHub에 올리지 않음
+.claude/
+index_backup_blue.html
+*.zip
+alba-payroll.skill
+alba-payroll/
+_*
