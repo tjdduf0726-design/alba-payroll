@@ -1,5 +1,5 @@
 /* 알바 월급 계산기 — 서비스 워커 (오프라인 앱 셸 캐시) */
-const CACHE = "alba-payroll-v2";
+const CACHE = "alba-payroll-v3";
 const SHELL = [
   "./",
   "./index.html",

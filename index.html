@@ -452,8 +452,9 @@
       <button type="button" class="chip" data-ex="1~4주차 매주 토일 4시간씩 시급 12000 김정훈">1~4주차 토일 4시간 · 김정훈</button>
       <button type="button" class="chip" data-ex="1~4주차 평일 6시간 시급 12000 4대보험">평일 6시간 · 4대보험</button>
       <button type="button" class="chip" data-ex="1~4주차 토일 저녁 8시부터 새벽 2시까지 시급 13000">토일 야간 20시~02시</button>
+      <button type="button" class="chip" data-ex="3주차 수요일 5시간 추가">＋ 3주차 수요일 5시간 추가</button>
     </div>
-    <div class="quick-hint" id="nlHint">이름·주차(예 1~4주차)·요일(토일/평일/주말)·시간(4시간씩 또는 20:00~02:00)·시급·가입유형을 알아듣고 아래 폼을 채워줍니다.</div>
+    <div class="quick-hint" id="nlHint">문장으로 근무표를 만들거나(예 <b>1~4주차 토일 4시간씩 김정훈</b>), 이미 있는 근무에 <b>추가</b>할 수 있어요(예 <b>3주차 수요일 5시간 추가</b> · <b>5주차 토일 6시간 추가</b>).</div>
   </section>
 
   <!-- 1. 설정 -->
@@ -1102,11 +1103,12 @@ function nlDays(t){
   if(/평일/.test(t)) return ["월","화","수","목","금"];
   if(/주말/.test(t)) return ["토","일"];
   if(/매일|월\s*~\s*일|월-일/.test(t)) return [...NL_WD];
-  const full=[...t.matchAll(/([월화수목금토일])\s*요일/g)].map(m=>m[1]);
-  if(full.length) return nlDedupeDays(full);
-  const cluster=t.match(/[월화수목금토일]{2,}/);   // '토일','월수금' 등 2글자 이상 붙은 요일
-  if(cluster) return nlDedupeDays([...cluster[0]]);
-  return null;
+  const set=[];
+  [...t.matchAll(/([월화수목금토일])\s*요일/g)].forEach(m=>set.push(m[1]));          // 월요일
+  const clusters=t.match(/[월화수목금토일]{2,}/g);                                    // 토일, 월수금
+  if(clusters) clusters.forEach(c=>[...c].forEach(ch=>set.push(ch)));
+  [...t.matchAll(/(?:^|\s)([월화수목금토일])(?:요일)?(?=\s|$)/g)].forEach(m=>set.push(m[1])); // 공백으로 구분된 단일 '토'
+  return set.length ? nlDedupeDays(set) : null;
 }
 function nlRange(a, b){
   if(b>=a && b-a<52){ const r=[]; for(let i=a;i<=b;i++) r.push(i); return r; }
@@ -1121,8 +1123,11 @@ function nlWeeks(t){
     m=t.match(/(?<![:\d])(\d{1,2})\s*(?:~|-|부터|에서)\s*(\d{1,2})(?![:\d])/);
     if(m){ const r=nlRange(+m[1], +m[2]); if(r) return r; }
   }
-  // 3) 개수형: 4주 / 4주간 / 4주동안 / 4주차
-  m=t.match(/(\d+)\s*주(?:차|간|동안)?/);
+  // 3) 특정 주 지정(순서): 3주차 → [3]
+  m=t.match(/(\d+)\s*주차/);
+  if(m){ const n=+m[1]; if(n>=1&&n<=52) return [n]; }
+  // 4) 개수형: 4주 / 4주간 / 4주동안 → [1..4]
+  m=t.match(/(\d+)\s*주(?:간|동안)?/);
   if(m){ const n=+m[1]; if(n>=1&&n<=52){ const r=[]; for(let i=1;i<=n;i++) r.push(i); return r; } }
   return null;
 }
@@ -1192,10 +1197,11 @@ function nlClock(t){
 
 function parseNL(text){
   const t = " " + text.replace(/\s+/g, " ").trim() + " ";
+  const intent = /추가|덧붙|append|넣어|더넣|더 넣|더해|더 해/.test(t) ? "add" : "set";
   const days = nlDays(t);
-  const clock = nlClock(t);
-  const hours = clock ? null : nlHours(t);
-  let weekNums = nlWeeks(t);
+  const clockObj = nlClock(t);
+  const hours = clockObj ? null : nlHours(t);
+  const weekNums = nlWeeks(t);
   const name = nlName(t);
   const insurance = nlInsurance(t);
   const five_plus = nlFivePlus(t);
@@ -1205,49 +1211,90 @@ function parseNL(text){
 
   const missing = [];
   if(!days) missing.push("요일(예: 토일 / 평일 / 주말)");
-  if(!hours && !clock) missing.push("시간(예: 4시간씩 / 20:00~02:00)");
+  if(!hours && !clockObj) missing.push("시간(예: 4시간씩 / 20:00~02:00)");
   if(missing.length){
-    return {weeks:null,
-      error:`못 읽은 항목: <b>${missing.join(", ")}</b><br>예) <b>1~4주차 매주 토일 4시간씩 시급 12000 김정훈</b>`,
-      errorToast:"요일과 시간을 조금 더 자세히 적어주세요"};
+    return {error:`못 읽은 항목: <b>${missing.join(", ")}</b><br>예) <b>1~4주차 매주 토일 4시간씩 시급 12000 김정훈</b>`,
+            errorToast:"요일과 시간을 조금 더 자세히 적어주세요"};
   }
-  if(!weekNums) weekNums = [1];   // 주차 미지정 → 1주차
+  return {intent, days, clock:!!clockObj, clockObj, hours, weekNums, name, insurance, five_plus, wage, wageDefaulted};
+}
 
-  const weeks = weekNums.map(n=>({
-    label: n + "주차",
-    days: days.map(d => clock
-      ? {label:d, start:clock.start, end:clock.end, brk:0, wage}
-      : {label:d, hours, wage, night_hours:0})
-  }));
+/* 파싱된 근무 하나를 현재 입력모드에 맞는 '날' 객체로 만든다 */
+function nlMakeDay(dlabel, p){
+  if(inputMode === "clock" && p.clock)
+    return {label:dlabel, start:p.clockObj.start, end:p.clockObj.end, brk:0, wage:p.wage};
+  if(p.clock){ const d = deriveClock(p.clockObj); return {label:dlabel, hours:d.hours, wage:p.wage, night_hours:d.night_hours}; }
+  return {label:dlabel, hours:p.hours, wage:p.wage, night_hours:0};
+}
+function nlTimeTxt(p){ return p.clock ? `${p.clockObj.start}~${p.clockObj.end}` : `하루 ${p.hours}시간`; }
+function nlWeeksTxt(nums){ return nums.length>1 ? `${nums[0]}~${nums[nums.length-1]}주차` : `${nums[0]}주차`; }
 
-  const wtxt = weekNums.length>1 ? `${weekNums[0]}~${weekNums[weekNums.length-1]}주차` : `${weekNums[0]}주차`;
-  const ttxt = clock ? `${clock.start}~${clock.end}` : `하루 ${hours}시간`;
-  const summary = `✅ <b>${name||"(이름 미지정)"}</b> · ${wtxt} · ${days.join("·")} · ${ttxt} · 시급 ${fmt(wage)}원`
-    + (wageDefaulted ? ` <span style="color:var(--warn)">(시급 미지정 → 12,000원)</span>` : ``)
-    + (clock ? ` <span style="color:var(--accent)">· 야간 자동계산</span>` : ``)
-    + `<br>` + (name ? `아래 <b>‘이 알바 저장’</b>을 누르면 명단에 추가됩니다.` : `이름을 넣고 <b>‘이 알바 저장’</b>을 누르면 명단에 추가됩니다.`);
+/* 새로 만들기: 폼을 통째로 채운다 */
+function applySet(p){
+  if(p.name){ document.getElementById("roster").value = ""; loadedKey = ""; document.getElementById("name").value = p.name; }
+  if(p.insurance){ const r=document.querySelector(`input[name="ins"][value="${p.insurance}"]`); if(r) r.checked=true; }
+  if(p.five_plus != null) document.getElementById("fivePlus").checked = p.five_plus;
+  inputMode = p.clock ? "clock" : "hours"; syncModeSeg();
+  loadedMonth = monthKey();
+  const weekNums = p.weekNums || [1];
+  const weeks = weekNums.map(n => ({label:n+"주차", days:p.days.map(d => nlMakeDay(d, p))}));
+  renderWeeks({weeks});
+  animateNext = true; recalc(); renderHistory();
+  document.getElementById("nlHint").innerHTML =
+    `✅ <b>${p.name||"(이름 미지정)"}</b> · ${nlWeeksTxt(weekNums)} · ${p.days.join("·")} · ${nlTimeTxt(p)} · 시급 ${fmt(p.wage)}원`
+    + (p.wageDefaulted ? ` <span style="color:var(--warn)">(시급 미지정 → 12,000원)</span>` : ``)
+    + (p.clock ? ` <span style="color:var(--accent)">· 야간 자동계산</span>` : ``)
+    + `<br>` + (p.name ? `아래 <b>‘이 알바 저장’</b>을 누르면 명단에 추가됩니다.` : `이름을 넣고 <b>‘이 알바 저장’</b>을 누르면 명단에 추가됩니다.`);
+  toast(p.name ? `‘${p.name}’ 근무표를 만들었어요` : "근무표를 채웠어요");
+}
 
-  return {weeks, name, insurance, five_plus, clock:!!clock, summary};
+/* 추가: 기존 근무표를 지우지 않고 요일·주를 덧붙인다 */
+function applyAdd(p){
+  // 다른 저장된 알바를 지목했으면 먼저 그 알바로 전환
+  const curName = loadedKey || (document.getElementById("name").value||"").trim();
+  if(p.name && roster[p.name] && p.name !== curName){
+    document.getElementById("roster").value = p.name; loadWorker(p.name);
+  }
+  const st = readState();                                  // 현재 모드로 읽기(파생 hours 포함)
+  let weeks = st.weeks.map(w => ({label:w.label, days:w.days.map(d => ({...d}))}));
+  // 시각 모드인데 시간만 추가하면 데이터 손실이 없도록 '시간 직접'으로 전환
+  let switched = false;
+  if(inputMode === "clock" && !p.clock){ inputMode = "hours"; syncModeSeg(); switched = true; }
+
+  const targetNums = p.weekNums;
+  const targetLabels = targetNums ? targetNums.map(n => n+"주차")
+                                  : (weeks.length ? weeks.map(w => w.label) : ["1주차"]);
+  targetLabels.forEach(lbl => {
+    let wk = weeks.find(w => w.label === lbl);
+    if(!wk){ wk = {label:lbl, days:[]}; weeks.push(wk); }
+    p.days.forEach(dl => {
+      const nd = nlMakeDay(dl, p);
+      const ex = wk.days.find(d => d.label === dl);
+      if(ex){ Object.keys(ex).forEach(k => delete ex[k]); Object.assign(ex, nd); }  // 같은 요일이면 갱신
+      else wk.days.push(nd);
+    });
+  });
+  weeks.sort((a,b) => (parseInt(a.label)||99) - (parseInt(b.label)||99));
+  weeks.forEach(w => w.days.sort((a,b) => NL_WD.indexOf(a.label) - NL_WD.indexOf(b.label)));
+
+  renderWeeks({weeks});
+  animateNext = true; recalc(); renderHistory();
+  let saved = false;
+  if(loadedKey && roster[loadedKey]){ saveFormTo(loadedKey, monthKey()); saveRoster(); renderHistory(); saved = true; }
+
+  document.getElementById("nlHint").innerHTML =
+    `➕ <b>${targetNums ? nlWeeksTxt(targetNums) : "모든 주"}</b>에 <b>${p.days.join("·")}</b> · ${nlTimeTxt(p)}${p.clock?` <span style="color:var(--accent)">(야간 자동)</span>`:``} 추가했어요.`
+    + (switched ? ` <span style="color:var(--warn)">(‘시간 직접’ 모드로 전환)</span>` : ``)
+    + `<br>` + (saved ? `‘${loadedKey}’에 저장 완료.` : `<b>‘이 알바 저장’</b>을 누르면 명단에 반영됩니다.`);
+  toast(saved ? `‘${loadedKey}’ 근무를 추가·저장했어요` : "근무를 추가했어요");
 }
 
 function applyNL(){
   const t = document.getElementById("nlInput").value.trim();
   if(!t){ toast("무엇을 만들지 적어주세요", "warn"); return; }
   const p = parseNL(t);
-  if(!p.weeks){ document.getElementById("nlHint").innerHTML = p.error; toast(p.errorToast || "못 알아들었어요", "warn"); return; }
-  if(p.name){                          // 이름이 있으면 '새 알바'로 채워 기존 알바를 덮지 않음
-    document.getElementById("roster").value = "";
-    loadedKey = "";
-    document.getElementById("name").value = p.name;
-  }
-  if(p.insurance){ const r=document.querySelector(`input[name="ins"][value="${p.insurance}"]`); if(r) r.checked=true; }
-  if(p.five_plus != null) document.getElementById("fivePlus").checked = p.five_plus;
-  inputMode = p.clock ? "clock" : "hours"; syncModeSeg();
-  loadedMonth = monthKey();
-  renderWeeks({weeks:p.weeks});
-  animateNext = true; recalc(); renderHistory();
-  document.getElementById("nlHint").innerHTML = p.summary;
-  toast(p.name ? `‘${p.name}’ 근무표를 만들었어요` : "근무표를 채웠어요");
+  if(p.error){ document.getElementById("nlHint").innerHTML = p.error; toast(p.errorToast || "못 알아들었어요", "warn"); return; }
+  if(p.intent === "add") applyAdd(p); else applySet(p);
   document.getElementById("results").scrollIntoView({behavior: reduceMotion ? "auto" : "smooth", block:"nearest"});
 }
 
